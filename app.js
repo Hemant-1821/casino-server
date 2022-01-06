@@ -31,7 +31,7 @@ mongoose.connect(
 //middleware
 app.use(
   cors({
-    origin: "*",
+    origin: process.env.FE_URL,
     methods: ["GET", "POST", "DELETE", "UPDATE", "PUT", "PATCH"],
   })
 );
