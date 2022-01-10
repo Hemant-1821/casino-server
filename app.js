@@ -5,6 +5,7 @@ const http = require("http");
 const dotenv = require("dotenv");
 const server = http.createServer(app);
 var bodyParser = require("body-parser");
+const Razorpay = require("razorpay");
 var cors = require("cors");
 
 // Models
@@ -13,7 +14,8 @@ const Room = require("./models/Room");
 
 const io = require("socket.io")(server, {
   cors: {
-    origin: process.env.FE_URL,
+    origin:
+      process.env.ENV === "LOCAL" ? process.env.FE_LOCAL : process.env.FE_PROD,
     methods: ["GET", "POST"],
   },
 });
@@ -27,6 +29,11 @@ mongoose.connect(
     console.log("Connected to MongoDB");
   }
 );
+
+const razorpay = new Razorpay({
+  key_id: "rzp_test_Mw3xJon25Hkpmy",
+  key_secret: "l5Erzusy8IHDlkn63dKKnlr6",
+});
 
 //middleware
 app.use(
@@ -55,6 +62,10 @@ app.post("/register", async (req, res) => {
       email: req.body.email,
       password: req.body.password,
       isAdmin: false,
+      wallet: {
+        totalAmt: 0,
+        transactions: [],
+      },
     });
     //save user and respond
     const user = await newUser.save();
@@ -73,6 +84,64 @@ app.post("/login", async (req, res) => {
     user && validPassword && res.json({ resCode: 200, user, errDesc: "" });
   } catch (err) {
     res.json(err);
+  }
+});
+app.post("/razorpay", async (req, res) => {
+  var options = {
+    amount: (req.body.amt * 100).toString(), // amount in the smallest currency unit
+    currency: "INR",
+    receipt: "order_rcptid_11",
+  };
+  try {
+    razorpay.orders.create(options, function (err, order) {
+      console.log(order);
+      res.json({ resCode: 200, orderId: order.id });
+    });
+  } catch (err) {
+    console.log(err);
+  }
+});
+
+app.post("/verification", async (req, res) => {
+  var { paymentResp, userId } = req.body;
+  const paymentObj = await razorpay.payments.fetch(
+    paymentResp.razorpay_payment_id
+  );
+  // console.log(paymentObj);
+  console.log(req.body);
+  if (paymentObj && paymentObj.status === "captured") {
+    const user = await User.findOne({ _id: userId });
+    console.log("fetched user", { ...user._doc.wallet });
+    const updatedUser = {
+      ...user._doc,
+      wallet: {
+        totalAmt: user.wallet.totalAmt + paymentObj.amount / 100,
+        transactions: [
+          ...user.wallet.transactions,
+          {
+            date: new Date(),
+            amt: paymentObj.amount / 100,
+            order_id: paymentObj.order_id,
+          },
+        ],
+      },
+    };
+    await User.findOneAndUpdate({ _id: userId }, updatedUser);
+    console.log("updatedUser", updatedUser);
+    res.json({ status: "ok", totalAmt: updatedUser.wallet.totalAmt });
+  } else {
+    res.json({ state: "Error" });
+  }
+});
+
+app.get("/user", async (req, res) => {
+  const userId = req.query.userId;
+  try {
+    const user = await User.findOne({ _id: userId });
+    res.json({ resCode: 200, user });
+  } catch (e) {
+    console.log(e);
+    res.json({ resCode: 404, err: e });
   }
 });
 

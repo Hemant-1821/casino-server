@@ -1,5 +1,21 @@
 const mongoose = require("mongoose");
 
+const record = new mongoose.Schema({
+  date: String,
+  amt: String,
+  order_id: String,
+});
+
+const WalletSchema = new mongoose.Schema({
+  totalAmt: {
+    type: Number,
+    default: 0,
+  },
+  transactions: {
+    type: [record],
+  },
+});
+
 const UserSchema = new mongoose.Schema(
   {
     name: {
@@ -29,6 +45,7 @@ const UserSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    wallet: WalletSchema,
   },
   { timestamps: true }
 );
