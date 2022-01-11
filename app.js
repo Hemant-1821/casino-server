@@ -11,6 +11,7 @@ var cors = require("cors");
 // Models
 const User = require("./models/User");
 const Room = require("./models/Room");
+const Metal = require("./models/Metals");
 
 const io = require("socket.io")(server, {
   cors: {
@@ -49,10 +50,6 @@ app.use(
 );
 app.use(bodyParser.json());
 
-app.get("/", (req, res) => {
-  console.log("hello");
-});
-
 app.post("/register", async (req, res) => {
   try {
     //create new user
@@ -66,39 +63,44 @@ app.post("/register", async (req, res) => {
         totalAmt: 0,
         transactions: [],
       },
+      metals: {
+        gold: "0",
+        silver: "0",
+        platinum: "0",
+      },
     });
     //save user and respond
     const user = await newUser.save();
     console.log("user", user);
     res.json({ resCode: 200, user });
   } catch (err) {
-    res.json(err);
+    res.json({ resCode: 400, desc: err });
   }
 });
 app.post("/login", async (req, res) => {
   try {
     const user = await User.findOne({ email: req.body.email });
-    !user && res.json({ resCode: 404, errDesc: "User not found" });
+    !user && res.json({ resCode: 400, errDesc: "User not found" });
     const validPassword = req.body.password === user.password;
-    !validPassword && res.json({ resCode: 404, errDesc: "Wrong password" });
+    !validPassword && res.json({ resCode: 400, errDesc: "Wrong password" });
     user && validPassword && res.json({ resCode: 200, user, errDesc: "" });
   } catch (err) {
-    res.json(err);
+    res.json({ resCode: 400, desc: err });
   }
 });
 app.post("/razorpay", async (req, res) => {
   var options = {
-    amount: (req.body.amt * 100).toString(), // amount in the smallest currency unit
+    amount: (req.body.amt * 100).toString(),
     currency: "INR",
     receipt: "order_rcptid_11",
   };
   try {
     razorpay.orders.create(options, function (err, order) {
-      console.log(order);
-      res.json({ resCode: 200, orderId: order.id });
+      res.json({ resCode: 200, orderId: order.id, desc: "Successfull!" });
     });
   } catch (err) {
     console.log(err);
+    res.json({ resCode: 400, desc: "Something went wrong!" });
   }
 });
 
@@ -107,11 +109,8 @@ app.post("/verification", async (req, res) => {
   const paymentObj = await razorpay.payments.fetch(
     paymentResp.razorpay_payment_id
   );
-  // console.log(paymentObj);
-  console.log(req.body);
   if (paymentObj && paymentObj.status === "captured") {
     const user = await User.findOne({ _id: userId });
-    console.log("fetched user", { ...user._doc.wallet });
     const updatedUser = {
       ...user._doc,
       wallet: {
@@ -127,10 +126,9 @@ app.post("/verification", async (req, res) => {
       },
     };
     await User.findOneAndUpdate({ _id: userId }, updatedUser);
-    console.log("updatedUser", updatedUser);
-    res.json({ status: "ok", totalAmt: updatedUser.wallet.totalAmt });
+    res.json({ resCode: 200, totalAmt: updatedUser.wallet.totalAmt });
   } else {
-    res.json({ state: "Error" });
+    res.json({ resCode: 500, desc: "Not captured!" });
   }
 });
 
@@ -142,6 +140,80 @@ app.get("/user", async (req, res) => {
   } catch (e) {
     console.log(e);
     res.json({ resCode: 404, err: e });
+  }
+});
+
+app.get("/trading/price", async (req, res) => {
+  try {
+    const metal = await Metal.findOne({ _id: "61dd2b81aa4e3e518e160c0f" });
+    res.json({
+      resCode: 200,
+      gold: metal.gold,
+      silver: metal.silver,
+      platinum: metal.platinum,
+    });
+  } catch (e) {
+    console.log(e);
+    res.json({ resCode: 400, desc: e });
+  }
+});
+
+app.post("/trading/price", async (req, res) => {
+  const { gold, silver, platinum, userId } = req.body;
+  const user = await User.findOne({ _id: userId });
+  if (user.isAdmin) {
+    try {
+      await Metal.findOneAndUpdate(
+        { _id: "61dd2b81aa4e3e518e160c0f" },
+        { gold, silver, platinum }
+      );
+      res.json({ resCode: 200, desc: "Successfull!" });
+    } catch (e) {
+      console.log(e);
+      res.json({ resCode: 500, desc: e });
+    }
+  } else {
+    res.json({ resCode: 400, desc: "Not Authorized!" });
+  }
+});
+
+app.post("/trading/order", async (req, res) => {
+  console.log("/trading/order [GET]");
+  const { type, metal, rate, weight, userId } = req.body;
+  console.log("body", req.body);
+  const user = await User.findOne({ _id: userId });
+  const rates = await Metal.findOne({ _id: "61dd2b81aa4e3e518e160c0f" });
+  if (
+    (type === "Buy" && +(rates[metal] * weight) <= +user.wallet.totalAmt) ||
+    (type !== "Buy" && +weight <= +user.metals[metal])
+  ) {
+    try {
+      const updatedUser = {
+        ...user._doc,
+        wallet: {
+          totalAmt:
+            type === "Buy"
+              ? user.wallet.totalAmt - rates[metal] * weight
+              : user.wallet.totalAmt + rates[metal] * weight,
+          transactions: user.wallet.transactions,
+        },
+        metals: {
+          ...user.metals._doc,
+          [metal]:
+            type === "Buy"
+              ? +user.metals._doc[metal] + +weight
+              : +user.metals._doc[metal] - +weight,
+        },
+      };
+      console.log("updatedUser", updatedUser);
+      await User.findOneAndUpdate({ _id: userId }, updatedUser);
+      res.json({ resCode: 200, user: updatedUser });
+    } catch (e) {
+      console.log(e);
+      res.json({ errCode: 404, desc: e });
+    }
+  } else {
+    res.json({ resCode: 400, desc: "Insufficient Balance!" });
   }
 });
 
@@ -171,7 +243,6 @@ io.on("connection", (socket) => {
           "roomMembersCount",
           socketRoom.get(room.name).size
         );
-        console.log("104 Rooms", socketRoom);
       }
     } else {
       if (Object.keys(RoomInfo.users).length < 3) {
@@ -188,15 +259,10 @@ io.on("connection", (socket) => {
           "roomMembersCount",
           socketRoom.get(updatedRoom.name).size
         );
-        console.log("121 Rooms", socketRoom);
       } else {
         throw new Error("Full!");
       }
     }
-  });
-  User.watch().on("change", (change) => {
-    console.log("Something has changed", change);
-    io.emit("changes", change.updateDescription);
   });
   socket.on("disconnect", async function () {
     console.log("Got disconnect!", socket.id, "Room Name", roomName);
@@ -204,7 +270,6 @@ io.on("connection", (socket) => {
       status: true,
       name: roomName,
     }).exec();
-    console.log("150 Room info", RoomInfo);
     if (RoomInfo) {
       const roomUsersKey = Object.keys(RoomInfo.users);
       const roomUsersVal = Object.values(RoomInfo.users);
@@ -215,7 +280,6 @@ io.on("connection", (socket) => {
             newUsersObj[userId] = RoomInfo.users[userId];
           }
         });
-        console.log("newUserObj 157", newUsersObj);
         const updatedRoom = await Room.findOneAndUpdate(
           { _id: RoomInfo._id },
           { users: { ...newUsersObj } }

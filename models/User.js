@@ -16,6 +16,12 @@ const WalletSchema = new mongoose.Schema({
   },
 });
 
+const metalSchema = new mongoose.Schema({
+  gold: String,
+  silver: String,
+  platinum: String,
+});
+
 const UserSchema = new mongoose.Schema(
   {
     name: {
@@ -46,6 +52,7 @@ const UserSchema = new mongoose.Schema(
       default: false,
     },
     wallet: WalletSchema,
+    metals: metalSchema,
   },
   { timestamps: true }
 );
