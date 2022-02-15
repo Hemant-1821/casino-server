@@ -275,31 +275,45 @@ app.post("/trading/order", async (req, res) => {
 app.post("/gaming/bet", async (req, res) => {
   const { refNo, roomName, userId, color, number, colorAmt, numberAmt } =
     req.body;
-  const gameCheck = await Game.findOne({ refNo });
-  if (gameCheck) {
-    const newRoom = [
-      ...gameCheck._doc.rooms[roomName],
-      { userId, color, number, colorAmt, numberAmt },
-    ];
-    const allRooms = { ...gameCheck.rooms };
-    const updatedGame = {
-      refNo,
-      rooms: {
-        ...allRooms,
-        [roomName]: [...newRoom],
-      },
+  const totalAmt = (!!color ? +colorAmt : 0) + (!!number ? +numberAmt : 0);
+  const gameCheck = await Game.findOne({ refNo }).exec();
+  const user = await User.findOne({ _id: userId }).exec();
+  if (user.wallet.totalAmt >= totalAmt) {
+    if (gameCheck) {
+      const newRoom = [
+        ...gameCheck.rooms[roomName],
+        { userId, color, number, colorAmt, numberAmt },
+      ];
+      const allRooms = { ...gameCheck.rooms._doc };
+      const updatedGame = {
+        refNo,
+        rooms: {
+          ...allRooms,
+          [roomName]: [...newRoom],
+        },
+      };
+      await Game.findOneAndUpdate({ refNo }, { ...updatedGame }).exec();
+      res.json({ rsCode: "200", desc: "Bet Placed!!" });
+    } else {
+      const game = new Game({
+        refNo,
+        rooms: {
+          [roomName]: [{ userId, color, number, colorAmt, numberAmt }],
+        },
+      });
+      await game.save();
+      res.json({ rsCode: "200", desc: "Bet Placed!!" });
+    }
+    const updatedWallet = {
+      ...user.wallet._doc,
+      totalAmt: user.wallet.totalAmt - totalAmt,
     };
-    const ug = await Game.findOneAndUpdate({ refNo }, { ...updatedGame });
-    res.json({ rsCode: "200", desc: "Bet Placed!!" });
+    await User.findOneAndUpdate(
+      { _id: userId },
+      { ...user._doc, wallet: { ...updatedWallet } }
+    );
   } else {
-    const game = new Game({
-      refNo,
-      rooms: {
-        [roomName]: [{ userId, color, number, colorAmt, numberAmt }],
-      },
-    });
-    await game.save();
-    res.json({ rsCode: "200", desc: "Bet Placed!!" });
+    res.json({ rsCode: "404", desc: "Insufficient Balance" });
   }
 });
 
@@ -389,8 +403,6 @@ Game.watch().on("change", (change) => {
       .then(function (response) {
         setTimeout(async () => {
           const latRoom = await Game.find({}).sort({ $natural: -1 }).exec();
-          console.log("ref", latRoom[0]);
-          console.log("DICOR", latRoom[0].rooms.DICOR);
           const dicor_win = calWinner(latRoom[0].rooms.DICOR || []);
           const pola_win = calWinner(latRoom[0].rooms.POLA || []);
           const grasy_win = calWinner(latRoom[0].rooms.GRASY || []);
