@@ -7,11 +7,15 @@ const server = http.createServer(app);
 var bodyParser = require("body-parser");
 const Razorpay = require("razorpay");
 var cors = require("cors");
+const axios = require("axios");
+var _ = require("lodash");
 
 // Models
 const User = require("./models/User");
 const Room = require("./models/Room");
 const Metal = require("./models/Metals");
+const Game = require("./models/Game");
+const Results = require("./models/Results");
 
 const io = require("socket.io")(server, {
   cors: {
@@ -72,7 +76,7 @@ app.post("/register", async (req, res) => {
     //save user and respond
     const user = await newUser.save();
     console.log("user", user);
-    res.json({ resCode: 200, user });
+    res.json({ resCode: 200, newUser });
   } catch (err) {
     res.json({ resCode: 400, desc: err });
   }
@@ -143,6 +147,32 @@ app.get("/user", async (req, res) => {
   }
 });
 
+app.post("/user", async (req, res) => {
+  const { userId, email, password } = req.body;
+  try {
+    const user = await User.findOne({ _id: userId });
+    const updatedUser = { ...user._doc, email, password };
+    const savedUser = await User.findOneAndUpdate(
+      { _id: userId },
+      { ...updatedUser }
+    );
+    res.json({ resCode: 200, savedUser });
+  } catch (e) {
+    console.log(e);
+    res.json({ resCode: 404, err: e });
+  }
+});
+
+app.get("/user/count", async (req, res) => {
+  try {
+    const user = await User.find({ isAdmin: false });
+    res.json({ resCode: 200, count: user.length });
+  } catch (e) {
+    console.log(e);
+    res.json({ resCode: 404, err: e });
+  }
+});
+
 app.get("/trading/price", async (req, res) => {
   try {
     const metal = await Metal.findOne({ _id: "61dd2b81aa4e3e518e160c0f" });
@@ -152,6 +182,31 @@ app.get("/trading/price", async (req, res) => {
       silver: metal.silver,
       platinum: metal.platinum,
     });
+  } catch (e) {
+    console.log(e);
+    res.json({ resCode: 400, desc: e });
+  }
+});
+app.post("/game", async (req, res) => {
+  console.log("query", req.body);
+  const refNo = req.body.refNo;
+  try {
+    const game = await Game.findOne({ refNo }).exec();
+    console.log("game", game);
+    console.log("ref", refNo);
+    if (game) {
+      res.json({
+        resCode: 200,
+        game: game.rooms,
+        bol: true,
+      });
+    } else {
+      res.json({
+        resCode: 200,
+        game: {},
+        bol: false,
+      });
+    }
   } catch (e) {
     console.log(e);
     res.json({ resCode: 400, desc: e });
@@ -217,6 +272,37 @@ app.post("/trading/order", async (req, res) => {
   }
 });
 
+app.post("/gaming/bet", async (req, res) => {
+  const { refNo, roomName, userId, color, number, colorAmt, numberAmt } =
+    req.body;
+  const gameCheck = await Game.findOne({ refNo });
+  if (gameCheck) {
+    const newRoom = [
+      ...gameCheck._doc.rooms[roomName],
+      { userId, color, number, colorAmt, numberAmt },
+    ];
+    const allRooms = { ...gameCheck.rooms };
+    const updatedGame = {
+      refNo,
+      rooms: {
+        ...allRooms,
+        [roomName]: [...newRoom],
+      },
+    };
+    const ug = await Game.findOneAndUpdate({ refNo }, { ...updatedGame });
+    res.json({ rsCode: "200", desc: "Bet Placed!!" });
+  } else {
+    const game = new Game({
+      refNo,
+      rooms: {
+        [roomName]: [{ userId, color, number, colorAmt, numberAmt }],
+      },
+    });
+    await game.save();
+    res.json({ rsCode: "200", desc: "Bet Placed!!" });
+  }
+});
+
 var roomName = "";
 io.on("connection", (socket) => {
   socket.on("join-room", async (args) => {
@@ -264,6 +350,7 @@ io.on("connection", (socket) => {
       }
     }
   });
+
   socket.on("disconnect", async function () {
     console.log("Got disconnect!", socket.id, "Room Name", roomName);
     const RoomInfo = await Room.findOne({
@@ -293,6 +380,69 @@ io.on("connection", (socket) => {
     }
   });
 });
+
+Game.watch().on("change", (change) => {
+  const refNo = change.fullDocument?.refNo;
+  if (refNo)
+    axios
+      .get("http://worldtimeapi.org/api/timezone/Asia/Kolkata")
+      .then(function (response) {
+        setTimeout(async () => {
+          const latRoom = await Game.find({}).sort({ $natural: -1 }).exec();
+          console.log("ref", latRoom[0]);
+          console.log("DICOR", latRoom[0].rooms.DICOR);
+          const dicor_win = calWinner(latRoom[0].rooms.DICOR || []);
+          const pola_win = calWinner(latRoom[0].rooms.POLA || []);
+          const grasy_win = calWinner(latRoom[0].rooms.GRASY || []);
+          const ccon_win = calWinner(latRoom[0].rooms.CCON || []);
+          const results = await Results.find({}).exec();
+          console.log("results", results);
+          if (results.length !== 0) {
+            console.log("results", results);
+          } else {
+            const newRes = new Results({
+              refNo: latRoom[0].refNo,
+              CCON: [{ ...ccon_win }],
+              DICOR: [{ ...dicor_win }],
+              GRASY: [{ ...grasy_win }],
+              POLA: [{ ...pola_win }],
+            });
+            await newRes.save();
+          }
+          console.log("result declared");
+        }, (50 - new Date(response.data.utc_datetime).getSeconds()) * 1000);
+      });
+});
+
+const calWinner = (roomObj) => {
+  if (roomObj.length === 0) return {};
+  let bettingArray = [];
+  let totalAmt = 0;
+  roomObj.forEach((bet) => {
+    if (!!bet.color) {
+      bettingArray.push({
+        num: bet.color === "GREEN" ? 11 : bet.color === "RED" ? 12 : 13,
+        amt: bet.colorAmt,
+        userId: bet.userId,
+      });
+      totalAmt = totalAmt + +bet.colorAmt;
+    }
+    if (!!bet.number) {
+      bettingArray.push({
+        num: bet.number,
+        amt: bet.numberAmt,
+        userId: bet.userId,
+      });
+      totalAmt = totalAmt + +bet.numberAmt;
+    }
+  });
+
+  bettingArray = _.sortBy(bettingArray, ["amt"]);
+  const leastAmt = bettingArray[0].amt;
+  const finalArray = bettingArray.filter((obj) => obj.amt === leastAmt);
+
+  return { ..._.shuffle(finalArray)[0], totalAmt };
+};
 
 server.listen(process.env.PORT || 5000, () => {
   console.log("listening on *:5000");
