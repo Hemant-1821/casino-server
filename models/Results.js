@@ -2,10 +2,10 @@ const mongoose = require("mongoose");
 
 const resultSchema = new mongoose.Schema({
   refNo: String,
-  CCON: Array,
-  DICOR: Array,
-  POLA: Array,
-  GRASY: Array,
+  CCON: Object,
+  DICOR: Object,
+  POLA: Object,
+  GRASY: Object,
   totalAmt: String,
 });
 

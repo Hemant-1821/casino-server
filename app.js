@@ -55,9 +55,9 @@ app.use(
 app.use(bodyParser.json());
 
 app.post("/register", async (req, res) => {
+  console.log(req.body);
   try {
-    //create new user
-    const newUser = new User({
+    const userObj = {
       name: req.body.name,
       phoneNumber: req.body.phone,
       email: req.body.email,
@@ -72,12 +72,15 @@ app.post("/register", async (req, res) => {
         silver: "0",
         platinum: "0",
       },
-    });
+    };
+    //create new user
+    const newUser = new User(userObj);
     //save user and respond
     const user = await newUser.save();
     console.log("user", user);
-    res.json({ resCode: 200, newUser });
+    res.json({ resCode: 200, user });
   } catch (err) {
+    console.log(err);
     res.json({ resCode: 400, desc: err });
   }
 });
@@ -205,6 +208,26 @@ app.post("/game", async (req, res) => {
         resCode: 200,
         game: {},
         bol: false,
+      });
+    }
+  } catch (e) {
+    console.log(e);
+    res.json({ resCode: 400, desc: e });
+  }
+});
+app.get("/results", async (req, res) => {
+  try {
+    const results = await Results.find({}).exec();
+    console.log("results", results);
+    if (results) {
+      res.json({
+        resCode: 200,
+        results,
+      });
+    } else {
+      res.json({
+        resCode: 404,
+        desc: "result not declared!",
       });
     }
   } catch (e) {
@@ -397,36 +420,40 @@ io.on("connection", (socket) => {
 
 Game.watch().on("change", (change) => {
   const refNo = change.fullDocument?.refNo;
+  // console.log("change", change);
   if (refNo)
     axios
       .get("http://worldtimeapi.org/api/timezone/Asia/Kolkata")
       .then(function (response) {
         setTimeout(async () => {
-          const latRoom = await Game.find({}).sort({ $natural: -1 }).exec();
-          const dicor_win = calWinner(latRoom[0].rooms.DICOR || []);
-          const pola_win = calWinner(latRoom[0].rooms.POLA || []);
-          const grasy_win = calWinner(latRoom[0].rooms.GRASY || []);
-          const ccon_win = calWinner(latRoom[0].rooms.CCON || []);
-          const results = await Results.find({}).exec();
-          console.log("results", results);
-          if (results.length !== 0) {
-            console.log("results", results);
-          } else {
-            const newRes = new Results({
-              refNo: latRoom[0].refNo,
-              CCON: [{ ...ccon_win }],
-              DICOR: [{ ...dicor_win }],
-              GRASY: [{ ...grasy_win }],
-              POLA: [{ ...pola_win }],
-            });
-            await newRes.save();
-          }
+          // const latRoom = await Game.find({}).sort({ $natural: -1 }).exec();
+          const latRoom = await Game.find({ refNo }).exec();
+          console.log("latRoom", latRoom, refNo);
+          const dicor_win = await calWinner(
+            latRoom[0].rooms.DICOR || [],
+            refNo
+          );
+          const pola_win = await calWinner(latRoom[0].rooms.POLA || [], refNo);
+          const grasy_win = await calWinner(
+            latRoom[0].rooms.GRASY || [],
+            refNo
+          );
+          const ccon_win = await calWinner(latRoom[0].rooms.CCON || [], refNo);
+          const newRes = new Results({
+            refNo: latRoom[0].refNo,
+            CCON: { ...ccon_win },
+            DICOR: { ...dicor_win },
+            GRASY: { ...grasy_win },
+            POLA: { ...pola_win },
+          });
+          console.log("newRes", newRes);
+          await newRes.save();
           console.log("result declared");
         }, (50 - new Date(response.data.utc_datetime).getSeconds()) * 1000);
       });
 });
 
-const calWinner = (roomObj) => {
+const calWinner = async (roomObj, refNo) => {
   if (roomObj.length === 0) return {};
   let bettingArray = [];
   let totalAmt = 0;
@@ -452,8 +479,27 @@ const calWinner = (roomObj) => {
   bettingArray = _.sortBy(bettingArray, ["amt"]);
   const leastAmt = bettingArray[0].amt;
   const finalArray = bettingArray.filter((obj) => obj.amt === leastAmt);
+  const winner = { ..._.shuffle(finalArray)[0], totalAmt };
 
-  return { ..._.shuffle(finalArray)[0], totalAmt };
+  const user = await User.findOne({ _id: winner.userId });
+  const updatedUser = {
+    ...user._doc,
+    wallet: {
+      totalAmt: user.wallet.totalAmt + winner.totalAmt,
+      transactions: [
+        ...user.wallet.transactions,
+        {
+          date: new Date(),
+          amt: winner.totalAmt,
+          order_id: "Game_Won_" + refNo,
+        },
+      ],
+    },
+  };
+
+  await User.findOneAndUpdate({ _id: winner.userId }, updatedUser);
+
+  return { ...winner, name: user.name };
 };
 
 server.listen(process.env.PORT || 5000, () => {
