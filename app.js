@@ -16,6 +16,7 @@ const Room = require("./models/Room");
 const Metal = require("./models/Metals");
 const Game = require("./models/Game");
 const Results = require("./models/Results");
+const Withdraw = require("./models/Withdraw");
 
 const io = require("socket.io")(server, {
   cors: {
@@ -217,7 +218,7 @@ app.post("/game", async (req, res) => {
 });
 app.get("/results", async (req, res) => {
   try {
-    const results = await Results.find({}).exec();
+    const results = await Results.find({}).sort({ $natural: -1 }).exec();
     console.log("results", results);
     if (results) {
       res.json({
@@ -316,7 +317,7 @@ app.post("/gaming/bet", async (req, res) => {
         },
       };
       await Game.findOneAndUpdate({ refNo }, { ...updatedGame }).exec();
-      res.json({ rsCode: "200", desc: "Bet Placed!!" });
+      res.json({ resCode: "200", desc: "Bet Placed!!" });
     } else {
       const game = new Game({
         refNo,
@@ -325,7 +326,7 @@ app.post("/gaming/bet", async (req, res) => {
         },
       });
       await game.save();
-      res.json({ rsCode: "200", desc: "Bet Placed!!" });
+      res.json({ resCode: "200", desc: "Bet Placed!!" });
     }
     const updatedWallet = {
       ...user.wallet._doc,
@@ -336,8 +337,69 @@ app.post("/gaming/bet", async (req, res) => {
       { ...user._doc, wallet: { ...updatedWallet } }
     );
   } else {
-    res.json({ rsCode: "404", desc: "Insufficient Balance" });
+    res.json({ errCode: "404", desc: "Insufficient Balance" });
   }
+});
+
+app.post("/withdraw", async (req, res) => {
+  const { userId, amt, accountNo, ifsc, transactionId, withdrawId, amtTrans } =
+    req.body;
+  if (withdrawId) {
+    const request = await Withdraw.findOne({ _id: withdrawId }).exec();
+    console.log("request", request);
+    const response = await Withdraw.findByIdAndUpdate(
+      { _id: withdrawId },
+      {
+        ...request._doc,
+        transactionId: transactionId,
+        amtTrans: amtTrans,
+      }
+    ).exec();
+    console.log("358", response);
+    res.json({ resCode: "200", desc: "Request Updated!" });
+  } else {
+    const user = await User.findOne({ _id: userId });
+    const updatedUser = {
+      ...user._doc,
+      wallet: {
+        totalAmt: user.wallet.totalAmt - amt,
+        transactions: [
+          ...user.wallet.transactions,
+          {
+            date: new Date(),
+            amt: "-" + amt,
+            order_id: "Wallet_Redeem_" + new Date(),
+          },
+        ],
+      },
+    };
+
+    await User.findOneAndUpdate({ _id: userId }, updatedUser);
+
+    const withdraw = new Withdraw({
+      userId,
+      amt,
+      accountNo,
+      ifsc,
+      transactionId: undefined,
+      amtTrans: undefined,
+    });
+    await withdraw.save();
+    res.json({ resCode: "200", desc: "Request Placed!" });
+  }
+});
+
+app.post("/withdrawRequests", async (req, res) => {
+  const { userId } = req.body;
+  const requests = await Withdraw.find({ userId }).exec();
+  res.json({ resCode: "200", requests });
+});
+
+app.get("/admin/withdrawRequests", async (req, res) => {
+  const requests = await Withdraw.find({
+    transactionId: { $exists: false },
+  }).exec();
+  res.json({ resCode: "200", requests });
 });
 
 var roomName = "";
