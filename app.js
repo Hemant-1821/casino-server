@@ -167,6 +167,28 @@ app.post("/user", async (req, res) => {
   }
 });
 
+app.post("/allUser", async (req, res) => {
+  const { _id, name, email, password, phoneNumber, wallet, metals } = req.body;
+  console.log("_id", _id);
+  try {
+    const user = await User.findOne({ _id });
+    const updatedUser = {
+      ...user._doc,
+      name,
+      email,
+      password,
+      phoneNumber,
+      wallet: { ...wallet },
+      metals: { ...metals },
+    };
+    const savedUser = await User.findOneAndUpdate({ _id }, { ...updatedUser });
+    res.json({ resCode: 200, savedUser });
+  } catch (e) {
+    console.log(e);
+    res.json({ resCode: 404, err: e });
+  }
+});
+
 app.get("/user/count", async (req, res) => {
   try {
     const user = await User.find({ isAdmin: false });
@@ -393,6 +415,11 @@ app.post("/withdrawRequests", async (req, res) => {
   const { userId } = req.body;
   const requests = await Withdraw.find({ userId }).exec();
   res.json({ resCode: "200", requests });
+});
+
+app.get("/allUsers", async (req, res) => {
+  const users = await User.find({ isAdmin: false }).exec();
+  res.json({ resCode: "200", users });
 });
 
 app.get("/admin/withdrawRequests", async (req, res) => {
