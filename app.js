@@ -17,6 +17,7 @@ const Metal = require("./models/Metals");
 const Game = require("./models/Game");
 const Results = require("./models/Results");
 const Withdraw = require("./models/Withdraw");
+const Earning = require("./models/Earning");
 
 const io = require("socket.io")(server, {
   cors: {
@@ -213,6 +214,7 @@ app.get("/trading/price", async (req, res) => {
     res.json({ resCode: 400, desc: e });
   }
 });
+
 app.post("/game", async (req, res) => {
   console.log("query", req.body);
   const refNo = req.body.refNo;
@@ -238,6 +240,7 @@ app.post("/game", async (req, res) => {
     res.json({ resCode: 400, desc: e });
   }
 });
+
 app.get("/results", async (req, res) => {
   try {
     const results = await Results.find({}).sort({ $natural: -1 }).exec();
@@ -369,6 +372,12 @@ app.post("/withdraw", async (req, res) => {
   if (withdrawId) {
     const request = await Withdraw.findOne({ _id: withdrawId }).exec();
     console.log("request", request);
+    const Earn = new Earning({
+      amt: +request.amt - +amtTrans,
+      userId: request.userId,
+    });
+    console.log("Earn", Earn);
+    await Earn.save();
     const response = await Withdraw.findByIdAndUpdate(
       { _id: withdrawId },
       {
@@ -425,6 +434,22 @@ app.get("/allUsers", async (req, res) => {
 app.get("/admin/withdrawRequests", async (req, res) => {
   const requests = await Withdraw.find({
     transactionId: { $exists: false },
+  }).exec();
+  res.json({ resCode: "200", requests });
+});
+
+app.get("/admin/earnings", async (req, res) => {
+  const requests = await Earning.find({}).exec();
+  res.json({ resCode: "200", requests });
+});
+
+app.post("/admin/earningDates", async (req, res) => {
+  const { startDate, endDate } = req.body;
+  const requests = await Earning.find({
+    createdAt: {
+      $gte: new Date(startDate),
+      $lte: new Date(endDate),
+    },
   }).exec();
   res.json({ resCode: "200", requests });
 });
