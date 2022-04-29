@@ -89,9 +89,10 @@ app.post("/register", async (req, res) => {
 app.post("/login", async (req, res) => {
   try {
     const user = await User.findOne({ email: req.body.email });
-    !user && res.json({ resCode: 400, errDesc: "User not found" });
+    !user && res.json({ resCode: 400, errDesc: "Invalid email or password" });
     const validPassword = req.body.password === user.password;
-    !validPassword && res.json({ resCode: 400, errDesc: "Wrong password" });
+    !validPassword &&
+      res.json({ resCode: 400, errDesc: "Invalid email or password" });
     user && validPassword && res.json({ resCode: 200, user, errDesc: "" });
   } catch (err) {
     res.json({ resCode: 400, desc: err });
